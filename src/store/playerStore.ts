@@ -24,6 +24,8 @@ interface PlayerStore {
   addAchievement: (achievementId: string) => void;
   addHistory: (event: HistoryEvent) => void;
   createPlayer: (name: string, attributes: Attributes, sceneType: string, systemId: string) => Player;
+  addTalent: (talent: Talent) => void;
+  hasTalent: (talentId: string) => boolean;
   resetPlayer: () => void;
   addVisitedScene: (scene: string) => void;
 }
@@ -363,6 +365,50 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
     const player = createInitialPlayer(name, attributes, sceneType, systemId, sysName);
     set({ player });
     return player;
+  },
+
+  addTalent: (talent) =>
+    set((state) => {
+      if (!state.player) return state;
+      if (state.player.talents.length >= 3) return state;
+      if (state.player.talents.some((t) => t.id === talent.id)) return state;
+
+      // Apply talent effects to player
+      const newAttributes = { ...state.player.attributes };
+      const newStats = { ...state.player.stats };
+      const e = talent.effects;
+
+      if (e.attrBonus) {
+        for (const [k, v] of Object.entries(e.attrBonus)) {
+          (newAttributes as Record<string, number>)[k] = Math.min(
+            10,
+            ((newAttributes as Record<string, number>)[k] || 0) + (v as number),
+          );
+        }
+      }
+      if (e.statBonus) {
+        for (const [k, v] of Object.entries(e.statBonus)) {
+          (newStats as Record<string, number>)[k] =
+            ((newStats as Record<string, number>)[k] || 0) + (v as number);
+        }
+      }
+      if (e.statBonus?.maxHp) {
+        newStats.hp = Math.min(newStats.maxHp, newStats.hp + (e.statBonus.maxHp as number));
+      }
+
+      return {
+        player: {
+          ...state.player,
+          talents: [...state.player.talents, talent],
+          attributes: newAttributes,
+          stats: newStats,
+        },
+      };
+    }),
+
+  hasTalent: (talentId): boolean => {
+    const state = usePlayerStore.getState();
+    return state.player?.talents.some((t: Talent) => t.id === talentId) ?? false;
   },
 
   resetPlayer: () => set({ player: null }),

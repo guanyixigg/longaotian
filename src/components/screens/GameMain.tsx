@@ -6,7 +6,10 @@ import type { TurnResult } from '../../agents/orchestrator';
 import { getSceneById } from '../../data/scenes';
 import { getSystemById } from '../../data/systems';
 import { getLevelFromExp } from '../../config/gameConfig';
-import type { GameEvent, Choice } from '../../types';
+import type { GameEvent, Choice, Talent } from '../../types';
+import TalentSelect from './TalentSelect';
+import { calcSynergies, getSynergyStrengthColor } from '../../utils/talentSync';
+import { RARITY_LABELS } from '../../config/gameConfig';
 import { motion, AnimatePresence } from 'framer-motion';
 import { exportSave, importSave } from '../../utils/storage';
 import TypewriterText from '../TypewriterText';
@@ -51,7 +54,7 @@ const itemTypeIcons: Record<string, React.ReactNode> = {
 
 export default function GameMain() {
   const { setScreen, addLog, logs, systemMessage, setSystemMessage, characterMood, setCharacterMood } = useGameStore();
-  const { player, setPlayer, addAchievement, addTask, addItem, useItem, equipItem, unequipItem } = usePlayerStore();
+  const { player, setPlayer, addAchievement, addTask, addItem, useItem, equipItem, unequipItem, addTalent } = usePlayerStore();
 
   const [sceneText, setSceneText] = useState('');
   const [choices, setChoices] = useState<Choice[]>([]);
@@ -73,6 +76,9 @@ export default function GameMain() {
   const lastTurnResult = useRef<TurnResult | null>(null);
   const rhythmRef = useRef(createRhythmController());
   const moodTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [showTalentSelect, setShowTalentSelect] = useState(false);
+  const [talentCandidates, setTalentCandidates] = useState<Talent[]>([]);
 
   // Load spritesheet from sessionStorage, IndexedDB, or localStorage
   useEffect(() => {
@@ -552,6 +558,11 @@ export default function GameMain() {
         setTimeout(() => setShowAchievements([]), 5000);
       }
 
+      if (turnResult.talentChoice) {
+        setTalentCandidates(turnResult.talentChoice.candidates);
+        setShowTalentSelect(true);
+      }
+
       addLog(`[第${currentPlayer.progress.round}回合] ${turnResult.sceneText.substring(0, 60)}...`);
       if (turnResult.event) {
         addLog(`[事件] ${turnResult.event.description.substring(0, 60)}...`);
@@ -563,6 +574,15 @@ export default function GameMain() {
       setIsProcessing(false);
     }
   }, [addLog, setSystemMessage, addTask, addItem, addAchievement, addSystemLog]);
+
+  const handleTalentSelect = useCallback((talent: Talent) => {
+    addTalent(talent);
+    setShowTalentSelect(false);
+    setSystemMessage(`获得天赋【${talent.name}】！`);
+    setShowSystemMsg(true);
+    addSystemLog('upgrade', `觉醒天赋: ${talent.name}`);
+    setTimeout(() => setShowSystemMsg(false), 3000);
+  }, [addTalent, setSystemMessage, addSystemLog]);
 
   const handleImpactContinue = useCallback(() => {
     setImpactEvent(null);
@@ -659,6 +679,14 @@ export default function GameMain() {
       }
     }
     setCharacterMood({ expression: newExpression, intensity });
+
+    if (choiceResult.rewardedTalent) {
+      addTalent(choiceResult.rewardedTalent);
+      setSystemMessage(`剧情获得天赋【${choiceResult.rewardedTalent.name}】！`);
+      setShowSystemMsg(true);
+      addSystemLog('upgrade', `觉醒天赋: ${choiceResult.rewardedTalent.name}`);
+      setTimeout(() => setShowSystemMsg(false), 3000);
+    }
 
     const gameOver = checkGameOver(updated);
     if (gameOver) {
@@ -867,6 +895,37 @@ export default function GameMain() {
               })}
             </div>
           </MangaPanel>
+
+          {/* Talents & Synergies */}
+          {player.talents.length > 0 && (
+            <MangaPanel className="!p-3">
+              <h3 className="font-bold mb-2 manga-title text-sm">天赋特质</h3>
+              <div className="space-y-1.5">
+                {player.talents.map((talent) => {
+                  const synergyTag = calcSynergies(player.talents).find(
+                    (l) => l.talentA === talent.id || l.talentB === talent.id,
+                  );
+                  return (
+                    <div key={talent.id} className="ink-border p-1.5 bg-white">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold">{talent.name}</span>
+                        <span className="text-[10px] manga-badge">{RARITY_LABELS[talent.rarity]}</span>
+                      </div>
+                      <p className="text-[10px] text-game-text-muted mt-0.5">{talent.description}</p>
+                      {synergyTag && (
+                        <div
+                          className="text-[10px] mt-1 font-medium"
+                          style={{ color: getSynergyStrengthColor(synergyTag.strength) }}
+                        >
+                          协同: {synergyTag.comboName} ({synergyTag.strength === 'legendary' ? '传说' : synergyTag.strength === 'strong' ? '强' : '弱'})
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </MangaPanel>
+          )}
         </div>
 
         {/* Center column - Main game */}
@@ -1381,6 +1440,12 @@ export default function GameMain() {
       <SystemDialogue />
       <NarrativeEvent />
       <DemoOverlay />
+
+      <TalentSelect
+        talents={talentCandidates}
+        onSelect={handleTalentSelect}
+        visible={showTalentSelect}
+      />
 
       {impactEvent && (
         <ImpactFrame

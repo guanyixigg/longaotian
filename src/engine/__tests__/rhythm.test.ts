@@ -7,7 +7,7 @@ const mockPlayer = (level = 1, luck = 5) => ({
   attributes: { luck, talent: 5, appearance: 5, intelligence: 5, physique: 5, family: 5 },
   id: 'test', name: 'test', createdAt: 0,
   system: { id: 'sys', name: 'test', level: 1, exp: 0, features: [] },
-  inventory: [], equipment: {}, skills: [], activeTasks: [], completedTasks: [], achievements: [], history: [],
+  inventory: [], equipment: {}, skills: [], activeTasks: [], completedTasks: [], achievements: [], history: [], talents: [],
 });
 
 describe('RhythmController', () => {
