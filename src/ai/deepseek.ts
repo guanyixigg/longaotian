@@ -322,4 +322,55 @@ export class DeepSeekProvider implements AIProvider {
 
     return localFallback;
   }
+
+  // ========== 通用调用 ==========
+
+  async generateNarrative(prompt: string): Promise<string> {
+    try {
+      return await withRetry(() => this.callAPIStream(prompt), { maxRetries: 1, baseDelay: 500 });
+    } catch (e) {
+      console.warn('Narrative streaming failed, trying non-streaming:', e);
+    }
+    try {
+      return await withRetry(() => this.callAPI(prompt), { maxRetries: 3, baseDelay: 1000 });
+    } catch (e) {
+      console.warn('Narrative non-streaming failed:', e);
+      throw e;
+    }
+  }
+
+  async generateLight(prompt: string, maxTokens = 150): Promise<string> {
+    try {
+      return await withRetry(() => this.callAPILight(prompt, maxTokens), { maxRetries: 2, baseDelay: 500 });
+    } catch (e) {
+      console.warn('Light call failed:', e);
+      return '';
+    }
+  }
+
+  private async callAPILight(prompt: string, maxTokens: number): Promise<string> {
+    const response = await fetch(this.baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: this.model,
+        messages: [
+          { role: 'system', content: '你是一个游戏辅助系统，只返回JSON格式数据。' },
+          { role: 'user', content: prompt },
+        ],
+        temperature: 0.6,
+        max_tokens: maxTokens,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`DeepSeek API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || '';
+  }
 }

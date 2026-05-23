@@ -113,9 +113,11 @@ function ParagraphTypewriter({
     return () => clearTimeout(timer);
   }, [index, text, speed, isActive, onComplete]);
 
+  const showFull = !isActive && index < text.length;
+
   return (
     <div className="whitespace-pre-wrap leading-relaxed" style={{ color: '#1a1a1a' }}>
-      {displayed}
+      {showFull ? text : displayed}
       {isActive && index < text.length && (
         <span className="animate-pulse" style={{ color: '#888888' }}>▌</span>
       )}
@@ -194,15 +196,14 @@ export default function NarrativeEvent() {
           animate={{ scale: 1, y: 0, opacity: 1 }}
           exit={{ scale: 0.9, y: 30, opacity: 0 }}
           transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-          className="relative w-full max-w-2xl max-h-[85vh] overflow-hidden cursor-auto"
+          className="relative w-full max-w-2xl max-h-[85vh] overflow-y-auto cursor-auto"
         >
-          <MangaPanel className="ink-shadow" pageNumber={activeStoryNode.nodeId ? parseInt(activeStoryNode.nodeId.slice(-2), 16) || 99 : 99}>
+          <MangaPanel className="ink-shadow">
             {/* Screentone header */}
             <div
               className="-mx-6 -mt-6 mb-4 px-6 py-3 flex items-center gap-3"
               style={{
-                background: 'repeating-conic-gradient(#1a1a1a 0% 25%, transparent 0% 50%)',
-                backgroundSize: '3px 3px',
+                background: '#1a1a1a',
               }}
             >
               <div
@@ -245,14 +246,11 @@ export default function NarrativeEvent() {
             {/* Accent strip */}
             <div
               className="h-1.5 w-full mb-4"
-              style={{
-                background: 'repeating-conic-gradient(#1a1a1a 0% 25%, transparent 0% 50%)',
-                backgroundSize: '3px 3px',
-              }}
+              style={{ background: '#1a1a1a' }}
             />
 
             {/* Description */}
-            <div className="mb-6 text-base md:text-lg min-h-[4rem]">
+            <div className="mb-6 text-base md:text-lg max-h-[40vh] overflow-y-auto">
               <ParagraphTypewriter
                 text={node.description}
                 speed={typingSpeed}

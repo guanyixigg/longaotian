@@ -35,10 +35,11 @@ import {
   Zap, Trophy,
   Scroll, MapPin, ChevronRight,
   Sparkles, Cpu, Settings, Download, Upload,
-  Package, FlaskConical, BookOpen, Shield, Sword
+  Package, FlaskConical, BookOpen, Shield, Sword,
+  Star, Clock
 } from 'lucide-react';
 import DemoOverlay from '../../demo/DemoOverlay';
-import { MangaPanel, HalftoneBar, SpeedLines, Onomatopoeia, ImpactFrame } from '../manga';
+import { MangaPanel, HalftoneBar, Onomatopoeia, ImpactFrame } from '../manga';
 import { CharacterPortrait } from '../character';
 import type { CharacterState, CharacterMood } from '../character';
 import type { ImpactEventType, ImpactStat, ImpactItem } from '../manga';
@@ -53,7 +54,7 @@ const itemTypeIcons: Record<string, React.ReactNode> = {
 };
 
 export default function GameMain() {
-  const { setScreen, addLog, logs, systemMessage, setSystemMessage, characterMood, setCharacterMood } = useGameStore();
+  const { setScreen, addLog, logs, systemMessage, setSystemMessage, characterMood, setCharacterMood, importantEvents, addImportantEvent } = useGameStore();
   const { player, setPlayer, addAchievement, addTask, addItem, useItem, equipItem, unequipItem, addTalent } = usePlayerStore();
 
   const [sceneText, setSceneText] = useState('');
@@ -71,8 +72,10 @@ export default function GameMain() {
   const [prevStats, setPrevStats] = useState(player?.stats);
   const [prevLevel, setPrevLevel] = useState(player?.stats.level || 1);
   const [systemLogs, setSystemLogs] = useState<Array<{ id: number; type: 'info' | 'warning' | 'reward' | 'upgrade' | 'error'; text: string; time: string }>>([]);
-  const [hasSignedInToday, setHasSignedInToday] = useState(false);
+  const systemLogIdRef = useRef(0);
   const [spriteUrl, setSpriteUrl] = useState<string | null>(null);
+  const [prevRealmIndex, setPrevRealmIndex] = useState(0);
+  const [realmFlash, setRealmFlash] = useState(false);
   const lastTurnResult = useRef<TurnResult | null>(null);
   const rhythmRef = useRef(createRhythmController());
   const moodTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -205,24 +208,40 @@ export default function GameMain() {
     switch (feature) {
       case 'daily_reward':
       case 'basic_feature': {
-        if (hasSignedInToday) {
+        const lastCheckIn = player?.systemHistory.lastCheckInRound || 0;
+        const currentRound = player?.progress.round || 0;
+        if (lastCheckIn >= currentRound) {
           message = '今日已签到，请明天再来';
           logType = 'info';
           break;
         }
         const reward = Math.floor(Math.random() * 50) + 10;
         const wealthReward = Math.floor(Math.random() * 30) + 5;
-        player!.stats.exp += reward;
-        player!.stats.wealth += wealthReward;
-        setHasSignedInToday(true);
+        if (player) {
+          player.stats.exp += reward;
+          player.stats.wealth += wealthReward;
+          player.systemHistory.lastCheckInRound = player.progress.round;
+          player.systemHistory.checkInStreak = Math.max(1, player.systemHistory.checkInStreak + 1);
+        }
         message = `签到成功！获得${reward}经验和${wealthReward}财富`;
         logType = 'reward';
         break;
       }
       case 'crit_bonus': {
+        const lastCheckIn = player?.systemHistory.lastCheckInRound || 0;
+        const currentRound = player?.progress.round || 0;
+        if (lastCheckIn >= currentRound) {
+          message = '今日已签到，暴击签到不可用';
+          logType = 'info';
+          break;
+        }
         const crit = Math.random() > 0.7;
         const reward = crit ? Math.floor(Math.random() * 200) + 100 : Math.floor(Math.random() * 50) + 20;
-        player!.stats.exp += reward;
+        if (player) {
+          player.stats.exp += reward;
+          player.systemHistory.lastCheckInRound = player.progress.round;
+          player.systemHistory.checkInStreak = Math.max(1, player.systemHistory.checkInStreak + 1);
+        }
         message = crit ? `暴击签到！获得${reward}经验！` : `签到获得${reward}经验`;
         logType = 'reward';
         break;
@@ -338,12 +357,14 @@ export default function GameMain() {
       switch (feature) {
         case 'daily_reward':
         case 'basic_feature':
-          if (!hasSignedInToday) {
+          if (player.systemHistory.lastCheckInRound < player.progress.round) {
             triggerSignInDialogue(player, '每日首次签到');
           }
           break;
         case 'crit_bonus':
-          triggerSignInDialogue(player, '周签到完成');
+          if (player.systemHistory.lastCheckInRound < player.progress.round) {
+            triggerSignInDialogue(player, '周签到完成');
+          }
           break;
         case 'basic_lottery': {
           const rollType = message.includes('大奖')
@@ -391,6 +412,22 @@ export default function GameMain() {
           triggerShopDialogue(player, '打开商店');
           break;
       }
+
+      if (player) {
+        const featureName = getFeatureDisplayName(feature);
+        /* 签到相关不加入重要事件 */
+        if (feature === 'daily_reward' || feature === 'basic_feature' || feature === 'crit_bonus') {
+          /* skip — 签到不入重要事件 */
+        } else if (feature === 'basic_lottery' && message.includes('大奖')) {
+          addImportantEvent({ round: player.progress.round, title: '抽奖大奖', description: message, type: 'system' });
+        } else if (feature === 'normal_dungeon' && !message.includes('失败')) {
+          addImportantEvent({ round: player.progress.round, title: '副本通关', description: message, type: 'system' });
+        } else if (feature === 'basic_alchemy' && message.includes('成功')) {
+          addImportantEvent({ round: player.progress.round, title: '炼丹成功', description: message, type: 'system' });
+        } else if ((feature === 'pet_catch' || feature === 'summon') && message.includes('成功')) {
+          addImportantEvent({ round: player.progress.round, title: '获得宠物', description: message, type: 'system' });
+        }
+      }
     }
 
     if (player) {
@@ -416,6 +453,17 @@ export default function GameMain() {
   useEffect(() => {
     if (player && sceneText === '') {
       startNewTurn();
+    }
+  }, []);
+
+  // Initialize prevRealmIndex from current player level on mount
+  useEffect(() => {
+    if (player) {
+      const idx = Math.min(
+        Math.floor((player.stats.level - 1) / 10),
+        (scene?.realmNames.length || 1) - 1
+      );
+      setPrevRealmIndex(idx);
     }
   }, []);
 
@@ -457,7 +505,8 @@ export default function GameMain() {
 
   const addSystemLog = useCallback((type: 'info' | 'warning' | 'reward' | 'upgrade' | 'error', text: string) => {
     const time = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-    setSystemLogs((prev) => [...prev.slice(-49), { id: Date.now(), type, text, time }]);
+    const id = ++systemLogIdRef.current;
+    setSystemLogs((prev) => [{ id, type, text, time }, ...prev.slice(0, 49)]);
   }, []);
 
   const startNewTurn = useCallback(async () => {
@@ -536,6 +585,7 @@ export default function GameMain() {
 
       if (turnResult.usedFallback) {
         addSystemLog('warning', 'AI 服务暂不可用，已切换至本地模板');
+        addImportantEvent({ round: currentPlayer.progress.round, title: 'AI 离线', description: 'AI 服务暂不可用，已切换至本地模板', type: 'system' });
       }
 
       for (const task of turnResult.newTasks) {
@@ -548,12 +598,20 @@ export default function GameMain() {
         }
         const itemNames = turnResult.droppedItems.map(i => i.name).join('、');
         addSystemLog('reward', `获得道具：${itemNames}`);
+        for (const item of turnResult.droppedItems) {
+          if (item.rarity === 'legendary' || item.rarity === 'epic') {
+            addImportantEvent({ round: currentPlayer.progress.round, title: '稀有掉落', description: `获得${item.name}（${item.rarity}）`, type: 'item' });
+          } else {
+            addImportantEvent({ round: currentPlayer.progress.round, title: '获得物品', description: item.name, type: 'item' });
+          }
+        }
       }
 
       if (turnResult.newAchievements.length > 0) {
         setShowAchievements(turnResult.newAchievements);
         for (const achId of turnResult.newAchievements) {
           addAchievement(achId);
+          addImportantEvent({ round: currentPlayer.progress.round, title: '解锁成就', description: achId, type: 'achievement' });
         }
         setTimeout(() => setShowAchievements([]), 5000);
       }
@@ -561,6 +619,10 @@ export default function GameMain() {
       if (turnResult.talentChoice) {
         setTalentCandidates(turnResult.talentChoice.candidates);
         setShowTalentSelect(true);
+      }
+
+      if (turnResult.checkInResult?.canCheckIn && turnResult.checkInResult.dialogue) {
+        addSystemLog('reward', turnResult.checkInResult.dialogue);
       }
 
       addLog(`[第${currentPlayer.progress.round}回合] ${turnResult.sceneText.substring(0, 60)}...`);
@@ -581,8 +643,11 @@ export default function GameMain() {
     setSystemMessage(`获得天赋【${talent.name}】！`);
     setShowSystemMsg(true);
     addSystemLog('upgrade', `觉醒天赋: ${talent.name}`);
+    if (player) {
+      addImportantEvent({ round: player.progress.round, title: '觉醒天赋', description: `${talent.name}（${talent.rarity}）`, type: 'talent' });
+    }
     setTimeout(() => setShowSystemMsg(false), 3000);
-  }, [addTalent, setSystemMessage, addSystemLog]);
+  }, [addTalent, setSystemMessage, addSystemLog, player, addImportantEvent]);
 
   const handleImpactContinue = useCallback(() => {
     setImpactEvent(null);
@@ -642,26 +707,43 @@ export default function GameMain() {
     setPrevLevel(updated.stats.level);
     setPlayer(updated);
 
+    // Realm upgrade detection
+    const newRealmIndex = Math.min(
+      Math.floor((updated.stats.level - 1) / 10),
+      maxRealmIndex
+    );
+    if (newRealmIndex > prevRealmIndex) {
+      setRealmFlash(true);
+      setTimeout(() => setRealmFlash(false), 2000);
+    }
+    setPrevRealmIndex(newRealmIndex);
+
     // Update character mood based on choice result
     let newExpression: CharacterMood['expression'] = 'neutral';
     let intensity = 0.5;
     if (choiceResult.combatResult) {
+      const enemyName = choiceResult.combatResult.enemyName;
       if (choiceResult.combatResult.isVictory) {
         newExpression = 'triumphant';
         intensity = 0.8;
+        addImportantEvent({ round: player.progress.round, title: '战斗胜利', description: `击败 ${enemyName}`, type: 'combat' });
       } else if (choiceResult.combatResult.isEscape) {
         newExpression = 'worried';
         intensity = 0.4;
+        addImportantEvent({ round: player.progress.round, title: '逃离战斗', description: `从 ${enemyName} 手中逃脱`, type: 'combat' });
       } else {
         newExpression = 'injured';
         intensity = 0.9;
+        addImportantEvent({ round: player.progress.round, title: '战斗败北', description: `被 ${enemyName} 击败`, type: 'combat' });
       }
     } else if (choiceId.startsWith('goto_')) {
       newExpression = 'awe';
       intensity = 0.7;
+      addImportantEvent({ round: player.progress.round, title: '场景切换', description: `前往新世界`, type: 'scene' });
     } else if (updated.stats.level > (prevLevel || 1)) {
       newExpression = 'happy';
       intensity = 0.6;
+      addImportantEvent({ round: player.progress.round, title: '等级提升', description: `升至 Lv.${updated.stats.level}`, type: 'level_up' });
     } else if (choiceResult.droppedItems.length > 0) {
       newExpression = 'surprised';
       intensity = 0.5;
@@ -685,6 +767,7 @@ export default function GameMain() {
       setSystemMessage(`剧情获得天赋【${choiceResult.rewardedTalent.name}】！`);
       setShowSystemMsg(true);
       addSystemLog('upgrade', `觉醒天赋: ${choiceResult.rewardedTalent.name}`);
+      addImportantEvent({ round: player.progress.round, title: '剧情天赋', description: `${choiceResult.rewardedTalent.name}（${choiceResult.rewardedTalent.rarity}）`, type: 'talent' });
       setTimeout(() => setShowSystemMsg(false), 3000);
     }
 
@@ -775,11 +858,14 @@ export default function GameMain() {
     (scene?.realmNames.length || 1) - 1
   );
   const currentRealm = scene?.realmNames[realmIndex] || '凡人';
+  const maxRealmIndex = (scene?.realmNames.length || 1) - 1;
+
+  const REALM_COLORS = ['#888888', '#666666', '#d4a017', '#e67e22', '#c0392b', '#8e44ad', '#7b1fa2', '#b71c1c'];
+  const realmColor = REALM_COLORS[Math.min(realmIndex, REALM_COLORS.length - 1)];
+  const realmTextColor = realmIndex >= 2 ? '#f5f0e8' : '#1a1a1a';
 
   return (
     <div className="h-screen flex flex-col paper-bg overflow-hidden">
-      <SpeedLines active={currentEvent !== null} intensity="low" />
-
       {/* Top bar */}
       <MangaPanel className="px-4 py-3 !shadow-none !border-t-0 !border-x-0">
         <div className="max-w-6xl mx-auto flex items-center justify-between flex-wrap gap-3">
@@ -800,6 +886,14 @@ export default function GameMain() {
 
             <div className="flex items-center gap-2 text-sm">
               <span className="manga-badge">Lv.{player.stats.level}</span>
+              <motion.span
+                className="manga-badge"
+                style={{ background: realmColor, color: realmTextColor }}
+                animate={realmFlash ? { scale: [1, 1.4, 1], rotate: [0, -5, 5, 0] } : {}}
+                transition={{ duration: 0.6 }}
+              >
+                {currentRealm}
+              </motion.span>
               <span className="manga-badge" style={{ background: '#d4a017', color: '#1a1a1a' }}>
                 ¥{Math.floor(player.stats.wealth)}
               </span>
@@ -1073,7 +1167,14 @@ export default function GameMain() {
               <MapPin className="w-4 h-4" />
               <span className="text-sm">{scene?.name}</span>
               <span className="text-xs">·</span>
-              <span className="text-xs font-bold" style={{ color: '#1a1a1a' }}>{currentRealm}</span>
+              <motion.span
+                className="text-xs font-bold manga-title px-2 py-0.5"
+                style={{ background: realmColor, color: realmTextColor }}
+                animate={realmFlash ? { scale: [1, 1.3, 1], rotate: [0, -3, 3, 0] } : {}}
+                transition={{ duration: 0.6 }}
+              >
+                {currentRealm}
+              </motion.span>
               <span className="text-xs">·</span>
               <span className="text-xs">第{player.progress.sceneLevel}层天</span>
             </div>
@@ -1108,14 +1209,6 @@ export default function GameMain() {
             </AnimatePresence>
 
             <AnimatePresence>
-              {showEvent && currentEvent && (
-                <div className="absolute top-4 right-8 z-50 pointer-events-none">
-                  <Onomatopoeia text="ドン！" variant="impact" />
-                </div>
-              )}
-            </AnimatePresence>
-
-            <AnimatePresence>
               {showResult && (
                 <motion.div
                   initial={{ opacity: 0 }}
@@ -1129,74 +1222,71 @@ export default function GameMain() {
               )}
             </AnimatePresence>
 
-            {/* Choices with character portrait */}
+            {/* Choices */}
             {!showResult && (
-              <>
-                {/* Mobile portrait above choices */}
-                {portraitState && (
-                  <motion.div
-                    className="md:hidden flex justify-center w-full mb-3"
-                    initial={{ opacity: 0, scale: 0.9 }}
-                    animate={{ opacity: 1, scale: 1 }}
+              <div className="space-y-2">
+                {choices.map((choice, index) => (
+                  <motion.button
+                    key={choice.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.1 }}
+                    onClick={() => handleChoice(choice.id)}
+                    disabled={isProcessing}
+                    className="manga-btn w-full text-left flex items-center justify-between"
+                    whileTap={{ scale: 0.98 }}
                   >
-                    <CharacterPortrait
-                      state={portraitState}
-                      spritesheetUrl={spriteUrl}
-                      size={140}
-                    />
-                  </motion.div>
-                )}
-                <div className="flex gap-4 items-start">
-                  {/* Desktop portrait beside choices */}
-                  {portraitState && (
-                    <motion.div
-                      className="flex-shrink-0 hidden md:block"
-                      initial={{ opacity: 0, scale: 0.9 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ delay: 0.05 }}
-                    >
-                      <CharacterPortrait
-                        state={portraitState}
-                        spritesheetUrl={spriteUrl}
-                        size={180}
-                      />
-                    </motion.div>
-                  )}
-                  <div className="space-y-2 flex-1">
-                    {choices.map((choice, index) => (
-                      <motion.button
-                        key={choice.id}
-                        initial={{ opacity: 0, x: -20 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ delay: index * 0.1 }}
-                        onClick={() => handleChoice(choice.id)}
-                        disabled={isProcessing}
-                        className="manga-btn w-full text-left flex items-center justify-between"
-                        whileTap={{ scale: 0.98 }}
-                      >
-                        <div>
-                          <span className="font-bold">{choice.text}</span>
-                          {choice.consequence && (
-                            <div className="text-xs text-game-text-muted mt-1">{choice.consequence}</div>
-                          )}
-                        </div>
-                        <ChevronRight className="w-4 h-4 opacity-50 flex-shrink-0" />
-                      </motion.button>
-                    ))}
-                  </div>
-                </div>
-              </>
+                    <div>
+                      <span className="font-bold">{choice.text}</span>
+                      {choice.consequence && (
+                        <div className="text-xs text-game-text-muted mt-1">{choice.consequence}</div>
+                      )}
+                    </div>
+                    <ChevronRight className="w-4 h-4 opacity-50 flex-shrink-0" />
+                  </motion.button>
+                ))}
+              </div>
             )}
 
             {isProcessing && (
-              <div className="text-center text-game-text-muted py-4">
-                <motion.div
-                  animate={{ opacity: [0.5, 1, 0.5] }}
-                  transition={{ repeat: Infinity, duration: 1.5 }}
-                >
-                  系统推演中...
-                </motion.div>
-              </div>
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                <div className="manga-panel text-center py-5">
+                  <div className="flex justify-center gap-2 mb-3">
+                    {[0, 1, 2].map((i) => (
+                      <motion.div
+                        key={i}
+                        className="w-3 h-3 border-3 border-game-accent"
+                        animate={{ scale: [1, 0.6, 1] }}
+                        transition={{ repeat: Infinity, duration: 0.8, delay: i * 0.15 }}
+                      />
+                    ))}
+                  </div>
+                  <p className="manga-title text-lg">
+                    {'天道推演中'.split('').map((char, i) => (
+                      <motion.span
+                        key={i}
+                        animate={{ y: [0, -3, 0] }}
+                        transition={{ repeat: Infinity, duration: 0.6, delay: i * 0.08 }}
+                        className="inline-block"
+                      >
+                        {char}
+                      </motion.span>
+                    ))}
+                    <motion.span
+                      animate={{ opacity: [0, 1, 0] }}
+                      transition={{ repeat: Infinity, duration: 1 }}
+                      className="inline-block"
+                    >
+                      ...
+                    </motion.span>
+                  </p>
+                  <p className="text-xs text-game-text-muted mt-1">AI正在编织你的故事</p>
+                </div>
+              </motion.div>
             )}
           </MangaPanel>
 
@@ -1207,7 +1297,7 @@ export default function GameMain() {
               历史记录
             </h3>
             <div className="max-h-32 overflow-y-auto space-y-1">
-              {logs.slice(-10).map((log, i) => (
+              {logs.slice(0, 10).map((log, i) => (
                 <div key={i} className="log-entry">{log}</div>
               ))}
             </div>
@@ -1228,7 +1318,7 @@ export default function GameMain() {
               {systemLogs.length === 0 ? (
                 <div className="text-sm text-game-text-muted">暂无系统记录</div>
               ) : (
-                systemLogs.slice(-20).map((log) => {
+                systemLogs.slice(0, 20).map((log) => {
                   const iconMap: Record<string, React.ReactNode> = {
                     info: <Info className="w-3 h-3" style={{ color: '#2980b9' }} />,
                     warning: <AlertTriangle className="w-3 h-3" style={{ color: '#d4a017' }} />,
@@ -1341,45 +1431,6 @@ export default function GameMain() {
             </div>
           </MangaPanel>
 
-          <MangaPanel>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-bold flex items-center gap-2 manga-title">
-                <Scroll className="w-4 h-4" style={{ color: '#1a1a1a' }} />
-                任务列表
-              </h3>
-              <span className="text-xs text-game-text-muted">{player.activeTasks.length} 进行中</span>
-            </div>
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {player.activeTasks.length === 0 ? (
-                <div className="text-sm text-game-text-muted">暂无任务</div>
-              ) : (
-                player.activeTasks.map((task) => (
-                  <div key={task.id} className="ink-border bg-white p-3">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium" style={{ color: '#1a1a1a' }}>{task.name}</span>
-                      <span className="manga-badge text-xs">
-                        {task.type === 'main' ? '主线' : task.type === 'side' ? '支线' : '日常'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-game-text-muted mb-2">{task.description}</p>
-                    <div className="mb-2">
-                      <HalftoneBar
-                        value={task.progress}
-                        max={task.targetRounds}
-                        label="进度"
-                        color="ink"
-                      />
-                    </div>
-                    <div className="flex items-center gap-2 text-xs">
-                      <span style={{ color: '#d4a017' }}>EXP +{task.reward.exp}</span>
-                      <span style={{ color: '#27ae60' }}>财富 +{task.reward.wealth}</span>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </MangaPanel>
-
           <AnimatePresence>
             {showAchievements.length > 0 && (
               <motion.div
@@ -1399,6 +1450,51 @@ export default function GameMain() {
               </motion.div>
             )}
           </AnimatePresence>
+
+          <MangaPanel>
+            <div className="flex items-center gap-2 mb-3">
+              <Star className="w-5 h-5" style={{ color: '#e74c3c' }} />
+              <span className="font-bold text-sm" style={{ color: '#1a1a1a' }}>重要事件</span>
+              <span className="text-xs" style={{ color: '#999' }}>({importantEvents.length})</span>
+            </div>
+            {importantEvents.length === 0 ? (
+              <div className="text-xs py-3 text-center" style={{ color: '#bbb' }}>
+                暂无重要事件记录
+              </div>
+            ) : (
+              <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                {importantEvents.map((event) => {
+                  const typeConfig: Record<string, { color: string; icon: string; bg: string }> = {
+                    level_up: { color: '#d4a017', icon: '⬆', bg: '#fef9e7' },
+                    achievement: { color: '#e74c3c', icon: '🏆', bg: '#fdedec' },
+                    item: { color: '#8e44ad', icon: '📦', bg: '#f4ecf7' },
+                    combat: { color: '#c0392b', icon: '⚔', bg: '#fadbd8' },
+                    talent: { color: '#2ecc71', icon: '⭐', bg: '#eafaf1' },
+                    story: { color: '#2980b9', icon: '📖', bg: '#eaf2f8' },
+                    system: { color: '#7f8c8d', icon: '⚙', bg: '#f2f3f4' },
+                    scene: { color: '#e67e22', icon: '🌍', bg: '#fef5e7' },
+                  };
+                  const config = typeConfig[event.type] || typeConfig.system;
+                  return (
+                    <div key={event.id} className="p-2 rounded text-xs"
+                      style={{ backgroundColor: config.bg, borderLeft: `3px solid ${config.color}` }}>
+                      <div className="flex items-center gap-1.5 mb-0.5">
+                        <span>{config.icon}</span>
+                        <span className="font-bold" style={{ color: config.color }}>{event.title}</span>
+                        <span className="ml-auto flex items-center gap-0.5" style={{ color: '#bbb', fontSize: '10px' }}>
+                          <Clock className="w-2.5 h-2.5" />
+                          {new Date(event.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                      </div>
+                      <div className="text-xs" style={{ color: '#666' }}>
+                        第{event.round}回合 · {event.description}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </MangaPanel>
         </div>
       </div>
 

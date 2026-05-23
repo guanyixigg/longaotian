@@ -1,9 +1,11 @@
 import { create } from 'zustand';
-import type { GameState, GameScreen, GameEvent, Choice } from '../types';
+import type { GameState, GameScreen, GameEvent, Choice, ImportantEvent } from '../types';
 import type { CharacterMood } from '../components/character';
+import { dbAddLog } from '../db/database';
 
 interface GameStore extends GameState {
   characterMood: CharacterMood;
+  importantEvents: ImportantEvent[];
   setScreen: (screen: GameScreen) => void;
   setLoading: (loading: boolean) => void;
   setCurrentScene: (scene: string) => void;
@@ -13,8 +15,10 @@ interface GameStore extends GameState {
   setCharacterMood: (mood: Partial<CharacterMood>) => void;
   addNewAchievement: (id: string) => void;
   clearNewAchievements: () => void;
+  addImportantEvent: (event: Omit<ImportantEvent, 'id' | 'timestamp'>) => void;
   addLog: (log: string) => void;
   clearLogs: () => void;
+  addSystemLog: (playerId: string, type: 'info' | 'reward' | 'upgrade' | 'warning' | 'error', text: string) => void;
   resetGame: () => void;
 }
 
@@ -24,7 +28,7 @@ const initialMood: CharacterMood = {
   enteredAt: 0,
 };
 
-const initialState: GameState = {
+const initialState: GameState & { importantEvents: ImportantEvent[] } = {
   screen: 'start',
   isLoading: false,
   currentScene: '',
@@ -33,11 +37,13 @@ const initialState: GameState = {
   systemMessage: null,
   newAchievements: [],
   logs: [],
+  importantEvents: [],
 };
 
 export const useGameStore = create<GameStore>((set) => ({
   ...initialState,
   characterMood: initialMood,
+  importantEvents: [],
 
   setScreen: (screen) => set({ screen }),
   setLoading: (isLoading) => set({ isLoading }),
@@ -54,10 +60,17 @@ export const useGameStore = create<GameStore>((set) => ({
       newAchievements: [...state.newAchievements, id],
     })),
   clearNewAchievements: () => set({ newAchievements: [] }),
+  addImportantEvent: (event) =>
+    set((state) => ({
+      importantEvents: [{ ...event, id: Date.now(), timestamp: Date.now() }, ...state.importantEvents.slice(0, 29)],
+    })),
   addLog: (log) =>
     set((state) => ({
-      logs: [...state.logs.slice(-49), log],
+      logs: [log, ...state.logs.slice(0, 49)],
     })),
   clearLogs: () => set({ logs: [] }),
-  resetGame: () => set(initialState),
+  addSystemLog: (playerId, type, text) => {
+    dbAddLog({ playerId, type, text, timestamp: Date.now() });
+  },
+  resetGame: () => set({ ...initialState, importantEvents: [] }),
 }));

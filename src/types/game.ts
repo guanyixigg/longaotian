@@ -57,6 +57,7 @@ export interface Stats {
   combatPower: number;
   wealth: number;
   fame: number;
+  gold: number;
 }
 
 export interface PlayerSystem {
@@ -82,6 +83,25 @@ export interface Item {
   rarity: 'common' | 'rare' | 'epic' | 'legendary';
   type: 'weapon' | 'armor' | 'consumable' | 'material' | 'skill_book';
   effect?: Record<string, number>;
+}
+
+export interface Artifact {
+  id: string;
+  name: string;
+  type: 'growth_artifact';
+  quality: 'legendary';
+  abilities: string[];
+  upgradeLevel: number;
+  maxUpgradeLevel: number;
+  cooldown: number;
+  maxCooldown: number;
+  description: string;
+}
+
+export interface MerchantOffer {
+  item: Item | Artifact;
+  price: number;
+  negotiationDifficulty: number;
 }
 
 export interface Skill {
@@ -133,6 +153,15 @@ export interface HistoryEvent {
   type: 'scene' | 'event' | 'choice' | 'combat' | 'achievement';
 }
 
+export interface ImportantEvent {
+  id: number;
+  round: number;
+  title: string;
+  description: string;
+  type: 'level_up' | 'achievement' | 'item' | 'combat' | 'talent' | 'story' | 'system' | 'scene';
+  timestamp: number;
+}
+
 export interface Equipment {
   weapon?: Item;
   armor?: Item;
@@ -155,6 +184,9 @@ export interface Player {
   achievements: string[];
   history: HistoryEvent[];
   talents: Talent[];
+  npcStatuses: Record<string, NpcStatus>;
+  artifacts: Artifact[];
+  systemHistory: SystemHistory;
 }
 
 export interface SceneDefinition {
@@ -195,6 +227,38 @@ export interface GameEvent {
   description: string;
   choices: Choice[];
   type: 'normal' | 'random' | 'task' | 'story' | 'combat';
+  npcInteractions?: NpcInteraction[];
+}
+
+export interface NpcInteraction {
+  npcId: string;
+  npcName: string;
+  dialogue: string;
+  playerResponse?: string;
+}
+
+export interface NpcStatus {
+  id: string;
+  name: string;
+  alive: boolean;
+  affection: number;
+  location: string;
+  flags: string[];
+  firstMetRound: number;
+}
+
+export interface WorldShiftSignal {
+  shouldShift: boolean;
+  targetWorld: SceneType;
+  shiftEventIdea: string;
+}
+
+export interface SystemHistory {
+  checkInStreak: number;
+  lastCheckInRound: number;
+  lastRewardItemIds: string[];
+  totalGoldIssued: number;
+  artifactIssueHistory: { artifactId: string; issuedAtRound: number }[];
 }
 
 export type GameScreen = GameState['screen'];

@@ -169,8 +169,7 @@ export default function ImpactFrame({
             <div
               className="-mx-6 -mt-6 mb-4 px-6 py-3 flex items-center gap-3"
               style={{
-                background: 'repeating-conic-gradient(#1a1a1a 0% 25%, transparent 0% 50%)',
-                backgroundSize: '3px 3px',
+                background: '#1a1a1a',
               }}
             >
               <div
@@ -199,8 +198,7 @@ export default function ImpactFrame({
             <div
               className="h-1.5 w-full mb-4"
               style={{
-                background: 'repeating-conic-gradient(#1a1a1a 0% 25%, transparent 0% 50%)',
-                backgroundSize: '3px 3px',
+                background: '#1a1a1a',
               }}
             />
 

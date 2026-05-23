@@ -1,5 +1,5 @@
-import type { Player, GameEvent, Choice, Task, CombatResult, Item, Talent } from '../types';
-import type { AgentContext } from './types';
+import type { Player, GameEvent, Choice, Task, CombatResult, Item, Talent, SceneType, NpcInteraction } from '../types';
+import type { AgentContext, MemoryState, EndingPrototype, WorldShiftSignal, StoryWeaverOutput } from './types';
 import { generateTask } from './contentGenerator';
 import { checkAllAchievements } from './achievementAgent';
 import { getSceneById, SCENES } from '../data/scenes';
@@ -12,11 +12,44 @@ import { getProvider } from '../ai';
 import { ALL_TALENTS } from '../data/talents';
 import { selectTalentChoices } from '../utils/talentSync';
 
+import { createMemoryState, addEvent, needsCompression, compressMemory, applyCompression } from './memoryKeeper';
+import { generateEndingPrototype, evaluateEnding, mutateCondition } from './endingWatcher';
+import { recommendWorld, evaluateWorldShift } from './worldGuide';
+import { buildNarrativeContext, buildStoryWeaverPrompt, parseStoryWeaverOutput, generateFallbackOutput, buildEconomicState, buildArtifactHints } from './storyWeaver';
+import { validateNarrative, buildRetryPrompt } from './truthSeer';
+import { processDailyCheckIn } from './systemAgent';
+import type { CheckInResult } from './types';
+
+// ========== 模块级状态 ==========
+
+let memoryState: MemoryState = createMemoryState();
+let endingPrototype: EndingPrototype | null = null;
+
+// ========== 游戏初始化 ==========
+
+export interface GameInitialization {
+  recommendation: ReturnType<typeof recommendWorld>;
+  endingName: string;
+}
+
+export function initializeGame(player: Player): GameInitialization {
+  memoryState = createMemoryState();
+  endingPrototype = generateEndingPrototype(player.attributes, player.progress.sceneType);
+
+  const recommendation = recommendWorld(player.attributes, player.talents);
+
+  return {
+    recommendation,
+    endingName: endingPrototype.name,
+  };
+}
+
 export interface TurnResult {
   sceneText: string;
   event: GameEvent | null;
   choices: Choice[];
   systemMessage: string | null;
+  npcInteractions?: NpcInteraction[];
   newTasks: Task[];
   newAchievements: string[];
   achievementMessages: string[];
@@ -27,6 +60,7 @@ export interface TurnResult {
     wealthChange: number;
     fameChange: number;
     systemExpGain: number;
+    goldChange: number;
   };
   usedFallback: boolean;
   combatResult: CombatResult | null;
@@ -35,6 +69,7 @@ export interface TurnResult {
   talentChoice?: {
     candidates: Talent[];
   };
+  checkInResult?: CheckInResult;
 }
 
 function buildContext(player: Player): AgentContext {
@@ -327,44 +362,175 @@ function resolveCombat(player: Player, choiceId: string, event: GameEvent): Comb
 // ========== 回合处理 ==========
 
 export const processTurn = async (player: Player): Promise<TurnResult> => {
-  // Demo 模式：走预缓存路径
+  // Demo 模式
   if (new URLSearchParams(window.location.search).get('demo') === 'true') {
     const { executeDemoTurn } = await import('../demo/demoOrchestrator');
     return executeDemoTurn(player);
   }
 
-  const context = buildContext(player);
-  const provider = getProvider();
+  // 首回合延迟初始化多智能体状态
+  if (!endingPrototype) {
+    initializeGame(player);
+  }
 
-  let sceneContent: { text: string; choices: Choice[] };
-  let event: GameEvent | null = null;
-  let sysResponse: { message: string; rewards?: { systemExp?: number } };
+  const provider = getProvider();
   let usedFallback = false;
 
-  // -1. 检查场景切换事件（境界突破时最高优先级）
+  // ========== 1. 记忆守护者：短期记忆管理 ==========
+
+  if (player.history.length > 0) {
+    const lastHistory = player.history[player.history.length - 1];
+    memoryState = addEvent(memoryState, lastHistory.round, lastHistory.description);
+  }
+
+  if (needsCompression(memoryState)) {
+    const result = compressMemory(memoryState);
+    memoryState = applyCompression(memoryState, result);
+  }
+
+  // ========== 1.5. 道具冷却管理 ==========
+
+  let updatedPlayer = { ...player };
+  updatedPlayer.artifacts = updatedPlayer.artifacts.map((a) => ({
+    ...a,
+    cooldown: Math.max(0, a.cooldown - 1),
+  }));
+
+  // ========== 1.6. 系统智能体：签到判定 ==========
+
+  const checkInResult = processDailyCheckIn(updatedPlayer, updatedPlayer.systemHistory);
+  if (checkInResult.canCheckIn) {
+    updatedPlayer.systemHistory = {
+      ...updatedPlayer.systemHistory,
+      checkInStreak: checkInResult.streak,
+      lastCheckInRound: updatedPlayer.progress.round,
+    };
+
+    for (const reward of checkInResult.rewards) {
+      switch (reward.type) {
+        case 'gold':
+          updatedPlayer.stats = { ...updatedPlayer.stats, gold: updatedPlayer.stats.gold + (reward.amount || 0) };
+          break;
+        case 'exp':
+          updatedPlayer.stats = { ...updatedPlayer.stats, exp: updatedPlayer.stats.exp + (reward.amount || 0) };
+          break;
+        case 'item':
+          if (reward.item) {
+            updatedPlayer.inventory = [...updatedPlayer.inventory, reward.item];
+          }
+          break;
+        case 'artifact':
+          if (reward.artifact) {
+            const existingIdx = updatedPlayer.artifacts.findIndex((a) => a.id === reward.artifact!.id);
+            if (existingIdx >= 0) {
+              const newArtifacts = [...updatedPlayer.artifacts];
+              newArtifacts[existingIdx] = { ...newArtifacts[existingIdx], upgradeLevel: reward.artifact.upgradeLevel };
+              updatedPlayer.artifacts = newArtifacts;
+            } else {
+              updatedPlayer.artifacts = [...updatedPlayer.artifacts, reward.artifact];
+            }
+          }
+          break;
+        case 'attribute':
+          if (reward.attribute) {
+            const newAttrs = { ...updatedPlayer.attributes };
+            for (const [k, v] of Object.entries(reward.attribute)) {
+              (newAttrs as Record<string, number>)[k] = Math.min(10, ((newAttrs as Record<string, number>)[k] || 0) + (v as number));
+            }
+            updatedPlayer.attributes = newAttrs;
+          }
+          break;
+      }
+    }
+  }
+
+  // ========== 2. 结局守望者：评估结局进度 ==========
+
+  let endingHint = '';
+  if (endingPrototype) {
+    const evaluation = evaluateEnding(endingPrototype, player);
+    endingHint = evaluation.narrativeHint;
+
+    if (!evaluation.isStillPossible && endingPrototype.isStillPossible) {
+      for (const cond of endingPrototype.conditions) {
+        if (!cond.isStillPossible) {
+          endingPrototype = mutateCondition(endingPrototype, cond.id);
+          break;
+        }
+      }
+    }
+  }
+
+  // ========== 3. 世界导引师：检查世界转换 ==========
+
+  let worldShiftSignal: WorldShiftSignal | null = null;
+  if (player.progress.round % 10 === 0 || player.progress.round === 1) {
+    worldShiftSignal = evaluateWorldShift(player, player.progress.sceneType);
+  }
+
+  // ========== 4. 战斗/场景切换事件（规则驱动） ==========
+
+  let event: GameEvent | null = null;
+
   const transitionEvent = generateSceneTransitionEvent(player);
   if (transitionEvent) {
     event = transitionEvent;
   }
 
-  // 0. 检查是否有战斗遭遇
   if (!event) {
     event = generateCombatEvent(player);
   }
 
+  // ========== 5. 剧情编织者 + 真实之眼校验 ==========
+
+  const economicState = buildEconomicState(updatedPlayer);
+  const artifactHints = buildArtifactHints(updatedPlayer);
+
+  const narrativeContext = buildNarrativeContext(
+    updatedPlayer,
+    memoryState.longTermSummary,
+    memoryState.shortTerm,
+    endingHint,
+    worldShiftSignal,
+    undefined,
+    economicState,
+    artifactHints,
+  );
+
+  let storyOutput: StoryWeaverOutput | null = null;
+
   try {
-    // 1. 生成场景内容
-    const generated = await provider.generateScene(context);
-    sceneContent = generated;
+    let prompt = buildStoryWeaverPrompt(narrativeContext);
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const raw = await provider.generateNarrative(prompt);
+        const parsed = parseStoryWeaverOutput(raw);
+        const validation = validateNarrative(parsed, player, memoryState, endingPrototype ?? undefined);
+
+        if (validation.valid) {
+          storyOutput = parsed;
+          break;
+        }
+
+        const errorNote = buildRetryPrompt(validation.errors);
+        prompt = buildStoryWeaverPrompt(narrativeContext) + '\n' + errorNote;
+      } catch (e) {
+        console.warn(`StoryWeaver attempt ${attempt + 1}/3 failed:`, e);
+      }
+    }
   } catch (e) {
-    console.warn('AI provider failed for scene, using fallback:', e);
-    const fallback = await import('./contentGenerator');
-    const generated = fallback.generateSceneContent(context);
-    sceneContent = generated;
-    usedFallback = true;
+    console.warn('StoryWeaver pipeline error:', e);
   }
 
-  // 2. NPC邂逅事件（如果没有战斗）
+  if (!storyOutput) {
+    console.warn('All StoryWeaver attempts failed, using fallback.');
+    usedFallback = true;
+    storyOutput = generateFallbackOutput(narrativeContext);
+  }
+
+  // ========== 6. NPC邂逅事件 ==========
+
   if (!event) {
     const npcEvent = generateNPCEvent(player);
     if (npcEvent) {
@@ -372,53 +538,23 @@ export const processTurn = async (player: Player): Promise<TurnResult> => {
     }
   }
 
-  // 3. 普通随机事件（如果没有战斗和NPC事件）
-  if (!event) {
-    try {
-      const eventContent = await provider.generateEvent(context);
-      if (eventContent) {
-        event = {
-          id: `evt_${Date.now()}`,
-          title: '突发事件',
-          description: eventContent.text,
-          choices: eventContent.choices,
-          type: 'random',
-        };
-      }
-    } catch (e) {
-      console.warn('AI provider failed for event, using fallback:', e);
-      const fallback = await import('./contentGenerator');
-      const eventContent = fallback.generateEvent(context);
-      if (eventContent) {
-        event = {
-          id: `evt_${Date.now()}`,
-          title: '突发事件',
-          description: eventContent.text,
-          choices: eventContent.choices,
-          type: 'random',
-        };
-      }
-    }
+  // ========== 7. 记忆更新：记录新事件 ==========
+
+  for (const evt of storyOutput.newEvents) {
+    memoryState = addEvent(memoryState, player.progress.round, evt);
   }
 
-  try {
-    // 3. 系统消息
-    sysResponse = await provider.generateSystemMessage(context);
-  } catch (e) {
-    console.warn('AI provider failed for system message, using fallback:', e);
-    const fallback = await import('./contentGenerator');
-    sysResponse = fallback.generateSystemMessage(context);
-    usedFallback = true;
-  }
+  // ========== 8. 任务生成 ==========
 
-  // 4. 任务生成（限制同时进行的任务数量）
+  const context = buildContext(player);
   let newTask: Task | null = null;
   if (player.activeTasks.length < 5) {
     newTask = generateTask(context);
   }
   const newTasks: Task[] = newTask ? [newTask] : [];
 
-  // 5. 道具掉落（非战斗回合随机掉落）
+  // ========== 9. 道具掉落 ==========
+
   const droppedItems: Item[] = [];
   if (!event) {
     const droppedItem = generateRandomItem(player.progress.sceneType, player.stats.level);
@@ -427,21 +563,28 @@ export const processTurn = async (player: Player): Promise<TurnResult> => {
     }
   }
 
-  // 6. 基础效果
+  // ========== 10. 组装效果 ==========
+
+  const dailyGoldBonus = player.progress.round % 7 === 0 ? 50 : 0;
+  const randomGold = randomInt(0, 10);
+
   const effects = {
     hpChange: 0,
     mpChange: 0,
     expGain: randomInt(5, 15),
     wealthChange: randomInt(-10, 30),
     fameChange: randomInt(-2, 5),
-    systemExpGain: sysResponse.rewards?.systemExp || 0,
+    systemExpGain: 0,
+    goldChange: dailyGoldBonus + randomGold,
   };
 
-  // 6. 成就检测
+  // ========== 11. 成就检测 ==========
+
   const globalAchievements = getGlobalAchievements();
   const achievementResult = checkAllAchievements(player, globalAchievements);
 
-  // 5级天赋触发
+  // ========== 12. 天赋触发 ==========
+
   let talentChoice: TurnResult['talentChoice'] | undefined;
   if (player.stats.level >= 5 && player.talents.length === 0) {
     const candidates = selectTalentChoices(
@@ -455,11 +598,18 @@ export const processTurn = async (player: Player): Promise<TurnResult> => {
     }
   }
 
+  // ========== 13. 组装结果 ==========
+
+  const sceneText = storyOutput.narrativeHook
+    ? `${storyOutput.sceneDescription}\n\n${storyOutput.narrativeHook}`
+    : storyOutput.sceneDescription;
+
   return {
-    sceneText: sceneContent.text,
+    sceneText,
     event,
-    choices: event ? event.choices : sceneContent.choices,
-    systemMessage: sysResponse.message,
+    choices: event ? event.choices : storyOutput.playerChoices,
+    systemMessage: storyOutput.systemDialogue,
+    npcInteractions: storyOutput.npcInteractions,
     newTasks,
     newAchievements: achievementResult.newAchievements.map((a) => a.id),
     achievementMessages: achievementResult.messages,
@@ -469,6 +619,7 @@ export const processTurn = async (player: Player): Promise<TurnResult> => {
     completedTasks: [],
     droppedItems,
     talentChoice,
+    checkInResult,
   };
 };
 
@@ -481,6 +632,7 @@ export interface ChoiceResult {
     wealthChange: number;
     fameChange: number;
     systemExpGain: number;
+    goldChange: number;
   };
   storyFlags: string[];
   combatResult: CombatResult | null;
@@ -520,6 +672,7 @@ export const processChoice = (player: Player, choiceId: string, event: GameEvent
         wealthChange: combat.loot.wealth,
         fameChange: combat.isVictory ? randomInt(1, 5) : 0,
         systemExpGain: combat.isVictory ? randomInt(2, 8) : 0,
+        goldChange: combat.isVictory ? randomInt(10, 30) : 0,
       },
       storyFlags: combat.isVictory ? [`defeated_${combat.enemyName}`] : [],
       combatResult: combat,
@@ -801,6 +954,7 @@ export const updatePlayerAfterTurn = (
     wealthChange: turnResult.effects.wealthChange + choiceResult.effects.wealthChange,
     fameChange: turnResult.effects.fameChange + choiceResult.effects.fameChange,
     systemExpGain: turnResult.effects.systemExpGain + choiceResult.effects.systemExpGain,
+    goldChange: turnResult.effects.goldChange + (choiceResult.effects.goldChange || 0),
   };
 
   // 更新HP/MP
@@ -820,9 +974,10 @@ export const updatePlayerAfterTurn = (
     updated.stats.combatPower += 15;
   }
 
-  // 更新财富声望
+  // 更新财富声望金币
   updated.stats.wealth = Math.max(0, updated.stats.wealth + totalEffects.wealthChange);
   updated.stats.fame = Math.max(0, updated.stats.fame + totalEffects.fameChange);
+  updated.stats.gold = Math.max(0, updated.stats.gold + totalEffects.goldChange);
 
   // 更新系统经验
   updated.system = { ...updated.system };

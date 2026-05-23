@@ -94,7 +94,7 @@ export default function CharacterCreate() {
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-4xl"
       >
-        <MangaPanel pageNumber={2}>
+        <MangaPanel>
           <MangaTitle as="h2" className="text-center mb-2">
             创建角色
           </MangaTitle>

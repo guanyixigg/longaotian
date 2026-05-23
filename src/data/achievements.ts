@@ -5,7 +5,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   {
     id: 'ach_first_step',
     name: '踏上征途',
-    description: '完成第一次人生重开',
+    description: '完成第一次龙傲天之旅',
     category: 'progress',
     hidden: false,
     condition: { type: 'survive_rounds', rounds: 1 },

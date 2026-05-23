@@ -38,9 +38,9 @@ export default function StartScreen() {
         transition={{ duration: 0.5 }}
         className="text-center"
       >
-        <MangaPanel pageNumber={1} className="max-w-lg mx-auto">
+        <MangaPanel className="max-w-lg mx-auto">
           <MangaTitle as="h1" shake>
-            人生重开模拟器
+            龙傲天模拟器
           </MangaTitle>
 
           <Screentone density="10" className="my-4 h-2" />

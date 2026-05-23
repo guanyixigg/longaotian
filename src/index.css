@@ -53,8 +53,6 @@ body {
 
   .paper-bg {
     background: #f5f0e8;
-    background-image: repeating-conic-gradient(#f5f0e8 0% 25%, #f0ebe0 0% 50%);
-    background-size: 8px 8px;
   }
 
   .manga-btn {
@@ -93,20 +91,10 @@ body {
     box-shadow: 1px 1px 0 #888;
   }
 
-  .screentone-10 {
-    background-image: repeating-conic-gradient(#1a1a1a 0% 25%, transparent 0% 50%);
-    background-size: 4px 4px;
-  }
-
-  .screentone-30 {
-    background-image: repeating-conic-gradient(#1a1a1a 0% 25%, transparent 0% 50%);
-    background-size: 3px 3px;
-  }
-
+  .screentone-10,
+  .screentone-30,
   .screentone-cross {
-    background-image:
-      repeating-linear-gradient(45deg, #1a1a1a 0px, #1a1a1a 1px, transparent 1px, transparent 4px),
-      repeating-linear-gradient(-45deg, #1a1a1a 0px, #1a1a1a 1px, transparent 1px, transparent 4px);
+    /* grid patterns removed */
   }
 
   .manga-title {

@@ -62,7 +62,6 @@ export default function SystemSelect() {
               >
                 {isUnlocked ? (
                   <MangaPanel
-                    pageNumber={index + 1}
                     className={`cursor-pointer h-full ${isSelected ? 'ring-3 ring-game-accent' : ''}`}
                   >
                     <div onClick={() => setSelectedSystem(system.id)}>

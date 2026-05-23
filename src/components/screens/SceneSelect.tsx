@@ -48,7 +48,6 @@ export default function SceneSelect() {
               >
                 {isUnlocked ? (
                   <MangaPanel
-                    pageNumber={index + 3}
                     screentone={isVisited ? '10' : undefined}
                     className="cursor-pointer h-full"
                   >

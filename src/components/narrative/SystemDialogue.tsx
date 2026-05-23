@@ -124,8 +124,7 @@ export default function SystemDialogue() {
             <div
               className="px-4 py-2 flex items-center justify-between"
               style={{
-                background: 'repeating-conic-gradient(#1a1a1a 0% 25%, transparent 0% 50%)',
-                backgroundSize: '3px 3px',
+                background: '#1a1a1a',
               }}
             >
               <div className="flex items-center gap-2">

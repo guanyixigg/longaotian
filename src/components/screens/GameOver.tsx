@@ -13,8 +13,14 @@ export default function GameOver() {
 
   useEffect(() => { window.scrollTo(0, 0); }, []);
 
+  // Redirect to start if no player data (e.g. direct page refresh on game_over)
+  useEffect(() => {
+    if (!player) {
+      setScreen('start');
+    }
+  }, [player, setScreen]);
+
   if (!player) {
-    setScreen('start');
     return null;
   }
 

@@ -1,8 +1,9 @@
 import { create } from 'zustand';
-import type { Player, Attributes, PlayerSystem, Stats, Progress, Item, Skill, Task, HistoryEvent, Talent } from '../types';
+import type { Player, Attributes, PlayerSystem, Stats, Progress, Item, Skill, Task, HistoryEvent, Talent, Artifact, SystemHistory } from '../types';
 import { getSystemById } from '../data/systems';
 import { useItemEffect } from '../data/items';
 import { getLevelFromExp } from '../config/gameConfig';
+import { createSystemHistory } from '../agents/systemAgent';
 
 interface PlayerStore {
   player: Player | null;
@@ -28,6 +29,12 @@ interface PlayerStore {
   hasTalent: (talentId: string) => boolean;
   resetPlayer: () => void;
   addVisitedScene: (scene: string) => void;
+  addGold: (amount: number) => void;
+  removeGold: (amount: number) => boolean;
+  addArtifact: (artifact: Artifact) => void;
+  upgradeArtifact: (artifactId: string) => boolean;
+  updateSystemHistory: (partial: Partial<SystemHistory>) => void;
+  applyCheckInRewards: (result: import('../agents/types').CheckInResult) => void;
 }
 
 export const createInitialPlayer = (
@@ -51,6 +58,7 @@ export const createInitialPlayer = (
     combatPower: attributes.physique * 5 + attributes.talent * 3,
     wealth: attributes.family * 200,
     fame: 0,
+    gold: 0,
   },
   system: {
     id: systemId,
@@ -74,6 +82,9 @@ export const createInitialPlayer = (
   achievements: [],
   history: [],
   talents: [],
+  npcStatuses: {},
+  artifacts: [],
+  systemHistory: createSystemHistory(),
 });
 
 export const usePlayerStore = create<PlayerStore>((set) => ({
@@ -419,4 +430,135 @@ export const usePlayerStore = create<PlayerStore>((set) => ({
         ? state.visitedScenes
         : [...state.visitedScenes, scene],
     })),
+
+  addGold: (amount) =>
+    set((state) => {
+      if (!state.player) return state;
+      return {
+        player: {
+          ...state.player,
+          stats: { ...state.player.stats, gold: state.player.stats.gold + amount },
+        },
+      };
+    }),
+
+  removeGold: (amount) => {
+    let success = false;
+    set((state) => {
+      if (!state.player || state.player.stats.gold < amount) return state;
+      success = true;
+      return {
+        player: {
+          ...state.player,
+          stats: { ...state.player.stats, gold: state.player.stats.gold - amount },
+        },
+      };
+    });
+    return success;
+  },
+
+  addArtifact: (artifact) =>
+    set((state) => {
+      if (!state.player) return state;
+      if (state.player.artifacts.some((a) => a.id === artifact.id)) return state;
+      return {
+        player: {
+          ...state.player,
+          artifacts: [...state.player.artifacts, artifact],
+        },
+      };
+    }),
+
+  upgradeArtifact: (artifactId) => {
+    let success = false;
+    set((state) => {
+      if (!state.player) return state;
+      const idx = state.player.artifacts.findIndex((a) => a.id === artifactId);
+      if (idx === -1) return state;
+      const artifact = state.player.artifacts[idx];
+      if (artifact.upgradeLevel >= artifact.maxUpgradeLevel) return state;
+      success = true;
+      const newArtifacts = [...state.player.artifacts];
+      newArtifacts[idx] = { ...artifact, upgradeLevel: artifact.upgradeLevel + 1 };
+      return { player: { ...state.player, artifacts: newArtifacts } };
+    });
+    return success;
+  },
+
+  updateSystemHistory: (partial) =>
+    set((state) => {
+      if (!state.player) return state;
+      return {
+        player: {
+          ...state.player,
+          systemHistory: { ...state.player.systemHistory, ...partial },
+        },
+      };
+    }),
+
+  applyCheckInRewards: (result) =>
+    set((state) => {
+      if (!state.player || !result.canCheckIn) return state;
+      const newStats = { ...state.player.stats };
+      const newAttrs = { ...state.player.attributes };
+      const newInventory = [...state.player.inventory];
+      const newArtifacts = [...state.player.artifacts];
+      const newHistory = { ...state.player.systemHistory };
+
+      for (const reward of result.rewards) {
+        switch (reward.type) {
+          case 'gold':
+            newStats.gold += reward.amount || 0;
+            newHistory.totalGoldIssued += reward.amount || 0;
+            break;
+          case 'exp':
+            newStats.exp += reward.amount || 0;
+            break;
+          case 'item':
+            if (reward.item) {
+              newInventory.push(reward.item);
+              newHistory.lastRewardItemIds = [...newHistory.lastRewardItemIds, reward.item.id].slice(-10);
+            }
+            break;
+          case 'artifact':
+            if (reward.artifact) {
+              const existingIdx = newArtifacts.findIndex((a) => a.id === reward.artifact!.id);
+              if (existingIdx >= 0) {
+                newArtifacts[existingIdx] = { ...newArtifacts[existingIdx], ...reward.artifact };
+              } else {
+                newArtifacts.push(reward.artifact);
+                newHistory.artifactIssueHistory = [
+                  ...newHistory.artifactIssueHistory,
+                  { artifactId: reward.artifact.id, issuedAtRound: state.player.progress.round },
+                ];
+              }
+            }
+            break;
+          case 'attribute':
+            if (reward.attribute) {
+              for (const [k, v] of Object.entries(reward.attribute)) {
+                (newAttrs as Record<string, number>)[k] = Math.min(
+                  10,
+                  ((newAttrs as Record<string, number>)[k] || 0) + (v as number),
+                );
+              }
+            }
+            break;
+        }
+      }
+
+      newHistory.checkInStreak = result.streak;
+      newHistory.lastCheckInRound = state.player.progress.round;
+
+      return {
+        player: {
+          ...state.player,
+          stats: newStats,
+          attributes: newAttrs,
+          inventory: newInventory,
+          artifacts: newArtifacts,
+          systemHistory: newHistory,
+        },
+      };
+    }),
 }));

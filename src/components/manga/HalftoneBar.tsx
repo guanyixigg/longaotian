@@ -33,8 +33,7 @@ export default function HalftoneBar({
         className="h-3 border-2 overflow-hidden"
         style={{
           borderColor: '#1a1a1a',
-          background: 'repeating-conic-gradient(#ccc 0% 25%, #e0e0e0 0% 50%)',
-          backgroundSize: '4px 4px',
+          background: '#e0e0e0',
         }}
       >
         <div

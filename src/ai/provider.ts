@@ -10,6 +10,12 @@ export interface AIProvider {
   generateScene(context: AgentContext): Promise<GeneratedContent>;
   generateEvent(context: AgentContext): Promise<GeneratedContent | null>;
   generateSystemMessage(context: AgentContext): Promise<SystemResponse>;
+
+  /** 通用叙事生成（供StoryWeaver使用） */
+  generateNarrative(prompt: string): Promise<string>;
+
+  /** 轻量调用（供非核心智能体使用，token限制严格） */
+  generateLight(prompt: string, maxTokens?: number): Promise<string>;
 }
 
 export interface ProviderConfig {
