@@ -186,6 +186,7 @@ export interface Choice {
   text: string;
   consequence?: string;
   requiredAttribute?: { attr: keyof Attributes; min: number };
+  rewardTalent?: string;
 }
 
 export interface GameEvent {
